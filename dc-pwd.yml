@@ -55,4 +55,4 @@ volumes:
 
 networks:
   jiranet:
-    driver: bridge
+    driver: overlay

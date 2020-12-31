@@ -11,6 +11,33 @@ set -o errexit
 [[ ${DEBUG} == true ]] && set -x
 
 #
+# This function purges osgi plugins when env is true
+#
+function purgeJiraPlugins() {
+  if [ "$JIRA_PURGE_PLUGINS_ONSTART" = 'true' ]; then
+    bash /usr/local/share/atlassian/purgeplugins.sh
+  fi
+}
+
+#
+# This function will replace variables inside the script setenv.sh
+#
+function updateSetEnv() {
+  local propertyname=$1
+  local propertyvalue=$2
+  sed -i -e "/${propertyname}=/c${propertyname}=\"${propertyvalue}\"" ${JIRA_INSTALL}/bin/setenv.sh
+}
+
+function setAllSetEnvs() {
+  local env_vars=$(env | awk -F= '/^SETENV/ {print $1}')
+  for env_variable in $env_vars
+  do
+    local propertyName=${env_variable#"SETENV_"}
+    updateSetEnv "$propertyName" "${!env_variable}"
+  done
+}
+
+#
 # This function will wait for a specific host and port for as long as the timeout is specified.
 #
 function waitForDB() {
@@ -19,7 +46,7 @@ function waitForDB() {
   local waitTimeout=${DOCKER_WAIT_TIMEOUT:-60}
   local waitIntervalTime=${DOCKER_WAIT_INTERVAL:-5}
   if [ -n "${waitHost}" ] && [ -n "${waitPort}" ]; then
-    dockerize -timeout ${waitTimeout}s -wait-retry-interval ${waitIntervalTime}s -wait tcp://${waitHost}:${waitPort}
+    dockerize -timeout "${waitTimeout}"s -wait-retry-interval "${waitIntervalTime}"s -wait tcp://"${waitHost}":"${waitPort}"
   fi
 }
 
@@ -59,11 +86,11 @@ function controlCrowdSSO() {
 }
 
 if [ -n "${JIRA_DELAYED_START}" ]; then
-  sleep ${JIRA_DELAYED_START}
+  sleep "${JIRA_DELAYED_START}"
 fi
 
 if [ -n "${JIRA_ENV_FILE}" ]; then
-  source ${JIRA_ENV_FILE}
+  source "${JIRA_ENV_FILE}"
 fi
 
 if [ -n "${JIRA_PROXY_NAME}" ]; then
@@ -78,18 +105,18 @@ if [ -n "${JIRA_PROXY_SCHEME}" ]; then
   xmlstarlet ed -P -S -L --insert "//Connector[not(@scheme)]" --type attr -n scheme --value "${JIRA_PROXY_SCHEME}" ${JIRA_INSTALL}/conf/server.xml
 fi
 
-jira_logfile="/var/atlassian/jira/log"
+jira_logfile="${JIRA_HOME}/log"
 
 if [ -n "${JIRA_LOGFILE_LOCATION}" ]; then
   jira_logfile=${JIRA_LOGFILE_LOCATION}
 fi
 
 if [ -n "${JIRA_CROWD_SSO}" ]; then
-  controlCrowdSSO ${JIRA_CROWD_SSO}
+  controlCrowdSSO "${JIRA_CROWD_SSO}"
 fi
 
 if [ ! -d "${jira_logfile}" ]; then
-  mkdir -p ${jira_logfile}
+  mkdir -p "${jira_logfile}"
 fi
 
 TARGET_PROPERTY=1catalina.org.apache.juli.AsyncFileHandler.directory
@@ -108,9 +135,12 @@ TARGET_PROPERTY=4host-manager.org.apache.juli.AsyncFileHandler.directory
 sed -i "/${TARGET_PROPERTY}/d" ${JIRA_INSTALL}/conf/logging.properties
 echo "${TARGET_PROPERTY} = ${jira_logfile}" >> ${JIRA_INSTALL}/conf/logging.properties
 
+setAllSetEnvs
+
 if [ "$1" = 'jira' ] || [ "${1:0:1}" = '-' ]; then
   waitForDB
-  /bin/bash ${JIRA_SCRIPTS}/launch.sh
+  purgeJiraPlugins
+  /bin/bash "${JIRA_SCRIPTS}"/launch.sh
   if [ -n "${JIRA_PROXY_PATH}" ]; then
     xmlstarlet ed -P -S -L --update "//Context/@path" --value "${JIRA_PROXY_PATH}" ${JIRA_INSTALL}/conf/server.xml
   fi
